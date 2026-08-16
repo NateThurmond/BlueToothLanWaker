@@ -262,6 +262,7 @@ def api_add_bt_device():
     device_type = (data.get("device_type") or "").strip() or None
     if not mac:
         return jsonify({"error": "mac_address is required"}), 400
+    
     device_id = db.upsert_bt_device(mac, name, device_type)
     socketio.emit("devices_update", _get_device_status())
     return jsonify({"id": device_id}), 201

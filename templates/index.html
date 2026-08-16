@@ -167,11 +167,38 @@
     <div class="modal-handle"></div>
     <h3 class="modal-title" id="modal-assign-title">Assign Devices</h3>
     <p class="modal-subtitle" id="modal-assign-subtitle"></p>
+
+    <!-- Quick add controller from another PC bar -->
+    <div id="assign-copy-bar" class="assign-copy-bar" style="display:none">
+      <label class="copy-bar-label"><i class="bi bi-copy"></i> Add controller from another PC:</label>
+      <div class="copy-bar-row">
+        <select id="select-copy-controller" class="field-input field-select-sm"></select>
+        <button type="button" class="btn-sm primary" id="btn-copy-assignments">
+          <i class="bi bi-plus-lg"></i> Add
+        </button>
+      </div>
+    </div>
+
     <div id="assign-filter-bar" class="device-filters" style="margin-bottom:10px"></div>
     <div id="assign-device-list" class="assign-list"></div>
 
     <div class="modal-actions">
       <button type="button" class="btn-cancel" id="btn-assign-cancel">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Duplicate BT Device to PC Modal -->
+<div class="modal-overlay" id="modal-duplicate" role="dialog" aria-modal="true" aria-labelledby="modal-duplicate-title">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <h3 class="modal-title" id="modal-duplicate-title">Add to Another Computer</h3>
+    <p class="modal-subtitle" id="modal-duplicate-subtitle">Select which computer to add this controller to:</p>
+
+    <div id="duplicate-pc-list" class="assign-list"></div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="btn-duplicate-cancel">Done</button>
     </div>
   </div>
 </div>
@@ -222,7 +249,12 @@
       <label class="field-label" for="rename-custom-name">Custom Name</label>
       <input class="field-input" id="rename-custom-name" type="text"
              placeholder="e.g. Blue PS5 Controller" autocomplete="off">
-      <div class="field-hint">Leave blank to use the discovered name</div>
+      <div class="rename-hints d-flex justify-content-between align-items-center mt-1">
+        <span class="field-hint" id="rename-hint-text">Leave blank to use default name</span>
+        <button type="button" class="btn-text-action" id="btn-reset-name" style="display:none">
+          Clear custom name
+        </button>
+      </div>
 
       <div class="modal-actions">
         <button type="button" class="btn-cancel" id="btn-rename-cancel">Cancel</button>

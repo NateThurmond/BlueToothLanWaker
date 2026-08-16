@@ -1,9 +1,5 @@
 """
-Bluetooth scanner — detects both BLE (PS5 DualSense, Xbox Series X/S, etc.)
-and classic Bluetooth (Xbox One, PS4, etc.) devices.
-
-On macOS the BT addresses are CoreBluetooth UUIDs (not real MACs) — this is
-fine for local UI testing.  Real MAC addresses are returned on Linux / Raspberry Pi.
+Bluetooth scanner — detects BLE, Classic Bluetooth, and live BlueZ reconnection events.
 """
 
 import asyncio
@@ -33,10 +29,8 @@ _MANUFACTURER_MAP: dict[int, str] = {
     0x00E0: "Google",
 }
 
-# BLE HID service UUID (Human Interface Device — gamepads, keyboards, mice)
 _HID_SERVICE_UUID = "00001812-0000-1000-8000-00805f9b34fb"
 
-# Name substring → device_type label  (most specific patterns FIRST)
 _NAME_PATTERNS: list[tuple[str, str]] = [
     ("DualSense",                "PS5 DualSense"),
     ("DualShock 4",              "PS4 DualShock 4"),
@@ -46,7 +40,7 @@ _NAME_PATTERNS: list[tuple[str, str]] = [
     ("Xbox",                     "Xbox Controller"),
     ("Pro Controller",           "Nintendo Switch Pro"),
     ("Joy-Con",                  "Nintendo Joy-Con"),
-    ("Wireless Controller",      "PlayStation Controller"),   # PS3/PS4 generic
+    ("Wireless Controller",      "PlayStation Controller"),
     ("Stadia",                   "Google Stadia Controller"),
     ("8BitDo",                   "8BitDo Controller"),
     ("Steam Controller",         "Steam Controller"),
@@ -59,16 +53,6 @@ def classify_device(
     manufacturer_data: dict | None,
     service_uuids: list | None = None,
 ) -> str | None:
-    """
-    Return a human-friendly device type string, or None if truly unknown.
-
-    Priority order:
-      1. Advertisement name (most specific — only present in pairing mode for controllers)
-      2. Manufacturer company ID + HID service UUID combo
-      3. Manufacturer company ID alone (broad fallback label)
-      4. HID service UUID alone (unknown manufacturer)
-    """
-    # 1. Name match
     if name:
         name_lower = name.lower()
         for pattern, label in _NAME_PATTERNS:
@@ -80,12 +64,10 @@ def classify_device(
         and any(_HID_SERVICE_UUID in str(u).lower() or "1812" in str(u) for u in service_uuids)
     )
 
-    # 2 + 3. Manufacturer data
     if manufacturer_data:
         for company_id in manufacturer_data:
             vendor = _MANUFACTURER_MAP.get(company_id)
             if vendor == "Sony":
-                # HID + Sony = controller (most likely DualSense/DualShock)
                 return "PlayStation Controller" if is_hid else "Sony Device"
             if vendor == "Microsoft":
                 return "Xbox Controller" if is_hid else "Microsoft Device"
@@ -94,7 +76,6 @@ def classify_device(
             if vendor == "Apple":
                 return "Apple Device"
 
-    # 4. HID service alone — definitely an input device even if manufacturer unknown
     if is_hid:
         return "Game Controller"
 
@@ -108,9 +89,6 @@ def classify_device(
 async def _ble_scan(duration: float = 5.0) -> list[dict]:
     devices = []
     try:
-        # scanning_mode="passive" on Linux lets BlueZ see directed advertising
-        # packets (e.g. DualSense trying to reconnect to a paired PS5).
-        # On macOS CoreBluetooth ignores this kwarg gracefully.
         discovered = await BleakScanner.discover(
             timeout=duration,
             return_adv=True,
@@ -148,10 +126,6 @@ def _scan_ble_sync(duration: float = 5.0) -> list[dict]:
 
 
 async def _run_continuous_ble(callback_fn) -> None:
-    """
-    Run BLE scanner continuously, calling callback_fn(device_dict) the instant
-    any device advertisement is received.  Never returns normally.
-    """
     def _on_detect(ble_device, adv_data):
         name  = ble_device.name or getattr(adv_data, "local_name", "") or ""
         mfr   = getattr(adv_data, "manufacturer_data", {}) or {}
@@ -174,10 +148,6 @@ async def _run_continuous_ble(callback_fn) -> None:
 
 
 def start_continuous_ble_scan(callback_fn) -> None:
-    """
-    Block-forever entry point for a dedicated thread.
-    Restarts automatically on crash.
-    """
     if not _BLEAK_OK:
         logger.warning("bleak unavailable — continuous BLE scan not started")
         return
@@ -192,16 +162,7 @@ def start_continuous_ble_scan(callback_fn) -> None:
             loop.close()
 
 
-# ---------------------------------------------------------------------------
-# Classic Bluetooth scanning (Linux/RPi only — hcitool)
-# ---------------------------------------------------------------------------
-
 def _scan_classic_bt() -> list[dict]:
-    """
-    Active inquiry scan for classic BT devices (e.g. Xbox One controllers,
-    PS4 controllers).  Requires bluez installed on the host.
-    Takes ~10 s to complete.
-    """
     devices = []
     try:
         result = subprocess.run(
@@ -229,25 +190,12 @@ def _scan_classic_bt() -> list[dict]:
     return devices
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
 def scan_bluetooth() -> list[dict]:
-    """
-    Scan for nearby Bluetooth devices (BLE + classic).
-    Returns a deduplicated list of { mac, name, type } dicts.
-    """
     seen: dict[str, dict] = {}
-
-    # BLE scan (works on macOS and Linux)
     for d in _scan_ble_sync(duration=5.0):
         seen[d["mac"]] = d
-
-    # Classic BT scan (Linux only)
     if platform.system() == "Linux":
         for d in _scan_classic_bt():
             if d["mac"] not in seen:
                 seen[d["mac"]] = d
-
     return list(seen.values())

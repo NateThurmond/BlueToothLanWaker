@@ -63,10 +63,6 @@ function setupSocket() {
         if (d.inactive_timeout) state.inactiveTimeout = d.inactive_timeout;
       }
     }
-    // If current filter no longer exists in device list, reset it
-    if (_deviceFilter && !devices.some(d => d.device_type === _deviceFilter)) {
-      _deviceFilter = null;
-    }
     renderBTDevices();
   });
 
@@ -118,13 +114,25 @@ function renderPCs() {
 function pcCardHTML(pc) {
   const devices = pc.bt_devices || [];
   const badges = devices.length
-    ? devices.map((d) => `
+    ? devices.map((d) => {
+      const displayName = d.custom_name || d.discovered_name || d.mac_address;
+      return `
       <span class="device-badge" data-pc="${pc.id}" data-btid="${d.bt_id}">
-        <i class="bi bi-controller"></i>
-        ${esc(d.custom_name || d.discovered_name || d.mac_address)}
-        <button class="badge-remove" title="Remove"
-          onclick="removeMapping(${pc.id},${d.bt_id})">×</button>
-      </span>`).join("")
+        <i class="bi bi-controller badge-main-icon"></i>
+        <span class="badge-name" title="Click to rename" onclick="openRenameFromPC(${d.bt_id}, '${esc(displayName)}')">${esc(displayName)}</span>
+        <span class="badge-actions">
+          <button class="badge-btn" title="Rename controller" onclick="event.stopPropagation(); openRenameFromPC(${d.bt_id}, '${esc(displayName)}')">
+            <i class="bi bi-pencil-fill"></i>
+          </button>
+          <button class="badge-btn" title="Add to another computer" onclick="event.stopPropagation(); openDuplicateToPC(${d.bt_id}, '${esc(displayName)}', ${pc.id})">
+            <i class="bi bi-copy"></i>
+          </button>
+          <button class="badge-btn remove" title="Remove from this PC" onclick="event.stopPropagation(); removeMapping(${pc.id}, ${d.bt_id})">
+            <i class="bi bi-x-lg"></i>
+          </button>
+        </span>
+      </span>`;
+    }).join("")
     : `<span class="no-devices-hint">No controllers assigned</span>`;
 
   return `
@@ -280,15 +288,20 @@ function hideScanResults() {
   document.getElementById("scan-results-list").innerHTML = "";
 }
 
+// ── Constants & Filter Defaults ──────────────────────────
+const DEFAULT_TAGS = ["Xbox Controller", "PS5 DualSense"];
+let _deviceFilters = new Set(DEFAULT_TAGS);
+let _assignFilters = new Set(DEFAULT_TAGS);
+
 // ── Assign device modal ──────────────────────────────────
 
 let _assigningPcId = null;
-let _assignFilter  = null;
 
 function openAssignDevice(pcId) {
   _assigningPcId = pcId;
   _assigningBtDeviceId = null;
-  _assignFilter  = null;
+  // Default first view of assign tags to Xbox Controller and PS5 DualSense
+  _assignFilters = new Set(DEFAULT_TAGS);
   const pc = state.pcs.find((p) => p.id === pcId);
   document.getElementById("modal-assign-title").textContent = "Assign Devices";
   document.getElementById("modal-assign-subtitle").textContent =
@@ -301,10 +314,14 @@ function renderAssignFilterBar() {
   const bar = document.getElementById("assign-filter-bar");
   const types = [...new Set(state.btDevices.map(d => d.device_type).filter(Boolean))].sort();
   if (!types.length) { bar.innerHTML = ""; return; }
-  const allBtn = `<button class="filter-pill ${_assignFilter === null ? "active" : ""}" data-assign-filter="">All</button>`;
-  const typeBtns = types.map(t =>
-    `<button class="filter-pill ${_assignFilter === t ? "active" : ""}" data-assign-filter="${esc(t)}">${esc(t)}</button>`
-  ).join("");
+
+  const isAllActive = _assignFilters.size === 0;
+  const allBtn = `<button class="filter-pill ${isAllActive ? "active" : ""}" data-assign-filter="__ALL__">All</button>`;
+  const typeBtns = types.map(t => {
+    const isActive = _assignFilters.has(t);
+    return `<button class="filter-pill ${isActive ? "active" : ""}" data-assign-filter="${esc(t)}">${esc(t)}</button>`;
+  }).join("");
+
   bar.innerHTML = allBtn + typeBtns;
 }
 
@@ -312,7 +329,16 @@ function renderAssignFilterBar() {
 document.addEventListener("click", (e) => {
   const pill = e.target.closest("#assign-filter-bar .filter-pill");
   if (!pill) return;
-  _assignFilter = pill.dataset.assignFilter || null;
+  const filterVal = pill.dataset.assignFilter;
+  if (filterVal === "__ALL__") {
+    _assignFilters.clear();
+  } else {
+    if (_assignFilters.has(filterVal)) {
+      _assignFilters.delete(filterVal);
+    } else {
+      _assignFilters.add(filterVal);
+    }
+  }
   if (_assigningPcId) renderAssignList(_assigningPcId);
 });
 
@@ -322,9 +348,46 @@ function renderAssignList(pcId) {
   const assignedIds = new Set((pc?.bt_devices || []).map((d) => d.bt_id));
   const list = document.getElementById("assign-device-list");
 
-  const filtered = _assignFilter
-    ? state.btDevices.filter(d => d.device_type === _assignFilter)
-    : state.btDevices;
+  // Setup quick add controller from another PC dropdown
+  const copyBar = document.getElementById("assign-copy-bar");
+  const copySelect = document.getElementById("select-copy-controller");
+  const copyBtn = document.getElementById("btn-copy-assignments");
+  
+  const availableControllers = [];
+  for (const otherPc of state.pcs) {
+    if (otherPc.id === pcId) continue;
+    for (const d of (otherPc.bt_devices || [])) {
+      if (!assignedIds.has(d.bt_id)) {
+        const name = d.custom_name || d.discovered_name || d.mac_address;
+        availableControllers.push({
+          bt_id: d.bt_id,
+          name: name,
+          pc_name: otherPc.name,
+          pc_id: otherPc.id,
+        });
+      }
+    }
+  }
+
+  if (availableControllers.length > 0) {
+    copySelect.innerHTML = availableControllers.map(c =>
+      `<option value="${c.bt_id}" data-name="${esc(c.name)}" data-pc="${esc(c.pc_name)}">${esc(c.pc_name)} — ${esc(c.name)}</option>`
+    ).join("");
+    copyBar.style.display = "block";
+    copyBtn.onclick = () => {
+      const selectedBtId = parseInt(copySelect.value, 10);
+      const opt = copySelect.options[copySelect.selectedIndex];
+      const devName = opt ? opt.dataset.name : "Controller";
+      const pcName = opt ? opt.dataset.pc : "Other PC";
+      addControllerFromOtherPC(selectedBtId, pcId, devName, pcName);
+    };
+  } else {
+    copyBar.style.display = "none";
+  }
+
+  const filtered = _assignFilters.size === 0
+    ? state.btDevices
+    : state.btDevices.filter(d => _assignFilters.has(d.device_type));
 
   if (!state.btDevices.length) {
     list.innerHTML = `<div class="assign-empty">No Bluetooth devices seen yet.<br>
@@ -333,7 +396,7 @@ function renderAssignList(pcId) {
   }
 
   if (!filtered.length) {
-    list.innerHTML = `<div class="assign-empty">No devices match this filter.</div>`;
+    list.innerHTML = `<div class="assign-empty">No devices match the selected filters. Tap <strong>All</strong> or another tag to view other devices.</div>`;
     return;
   }
 
@@ -357,6 +420,15 @@ function renderAssignList(pcId) {
     const seenLabel = d.last_seen
       ? `<div class="assign-item-seen">${timeAgo(d.last_seen)}</div>`
       : "";
+
+    // Show if this device is assigned to other PCs
+    const otherAssignedPCs = state.pcs
+      .filter(p => p.id !== pcId && (p.bt_devices || []).some(m => m.bt_id === d.id))
+      .map(p => p.name);
+    const linkedLabel = otherAssignedPCs.length
+      ? `<div class="assign-item-linked"><i class="bi bi-pc-display"></i> Also on: ${esc(otherAssignedPCs.join(", "))}</div>`
+      : "";
+
     return `
     <div class="assign-item ${assigned ? "assigned" : ""}"
          onclick="toggleAssign(${pcId},${d.id},this)">
@@ -365,11 +437,88 @@ function renderAssignList(pcId) {
         ${nameHtml}
         ${typeLabel}
         <div class="assign-item-mac">${esc(d.mac_address)}</div>
+        ${linkedLabel}
         ${seenLabel}
       </div>
       ${d.is_active ? `<span class="assign-item-status active">● Active</span>` : ""}
     </div>`;
   }).join("");
+}
+
+async function addControllerFromOtherPC(btDeviceId, targetPcId, devName, pcName) {
+  const targetPC = state.pcs.find(p => p.id === targetPcId);
+  try {
+    await fetch("/api/mappings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pc_id: targetPcId, bt_device_id: btDeviceId }),
+    });
+    await loadPCs();
+    renderAssignList(targetPcId);
+    showToast(`Added "${devName}" from ${pcName} to ${targetPC?.name || 'PC'}`, "success");
+  } catch (e) {
+    showToast("Error adding controller", "error");
+  }
+}
+
+// ── Duplicate Controller to Another PC Modal ─────────────
+
+let _duplicatingBtDeviceId = null;
+
+function openDuplicateToPC(btDeviceId, deviceName, fromPcId) {
+  _duplicatingBtDeviceId = btDeviceId;
+  document.getElementById("modal-duplicate-title").textContent = "Add to Another Computer";
+  document.getElementById("modal-duplicate-subtitle").textContent = `Select computers to wake with "${deviceName}":`;
+  renderDuplicatePCList(btDeviceId);
+  openModal("modal-duplicate");
+}
+
+function renderDuplicatePCList(btDeviceId) {
+  const list = document.getElementById("duplicate-pc-list");
+  if (!state.pcs.length) {
+    list.innerHTML = `<div class="assign-empty">No computers found.<br>Go to <strong>Computers</strong> to add one.</div>`;
+    return;
+  }
+
+  list.innerHTML = state.pcs.map((pc) => {
+    const isAssigned = (pc.bt_devices || []).some((d) => d.bt_id === btDeviceId);
+    return `
+    <div class="assign-item ${isAssigned ? "assigned" : ""}" onclick="toggleDuplicateAssign(${pc.id}, ${btDeviceId}, this, '${esc(pc.name)}')">
+      <div class="assign-check"><i class="bi bi-check-lg"></i></div>
+      <div class="assign-item-info">
+        <div class="assign-item-name">${esc(pc.name)}</div>
+        <div class="assign-item-mac">${esc(pc.mac_address)}</div>
+      </div>
+      <span class="assign-item-status" style="font-size:0.75rem; font-weight:600; color:${isAssigned ? 'var(--green)' : 'var(--text-muted)'}">
+        ${isAssigned ? "✓ Assigned" : "+ Tap to add"}
+      </span>
+    </div>`;
+  }).join("");
+}
+
+async function toggleDuplicateAssign(pcId, btDeviceId, el, pcName) {
+  const wasAssigned = el.classList.contains("assigned");
+  el.classList.toggle("assigned");
+
+  const statusSpan = el.querySelector(".assign-item-status");
+  if (statusSpan) {
+    statusSpan.textContent = wasAssigned ? "+ Tap to add" : "✓ Assigned";
+    statusSpan.style.color = wasAssigned ? "var(--text-muted)" : "var(--green)";
+  }
+
+  const method = wasAssigned ? "DELETE" : "POST";
+  try {
+    await fetch("/api/mappings", {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pc_id: pcId, bt_device_id: btDeviceId }),
+    });
+    await loadPCs();
+    showToast(wasAssigned ? `Removed from ${pcName}` : `Added to ${pcName}`, "success");
+  } catch (e) {
+    el.classList.toggle("assigned");
+    showToast("Error updating assignment", "error");
+  }
 }
 
 async function toggleAssign(pcId, btDeviceId, el) {
@@ -402,7 +551,6 @@ async function removeMapping(pcId, btDeviceId) {
 // ═══════════════════════════════════════════════════════
 //  BT DEVICES
 // ═══════════════════════════════════════════════════════
-let _deviceFilter = null; // null = show all
 
 async function loadBTDevices() {
   try {
@@ -428,28 +576,39 @@ function renderDeviceFilters() {
 
   if (!types.length) { container.innerHTML = ""; return; }
 
-  const allBtn = `<button class="filter-pill ${_deviceFilter === null ? "active" : ""}" data-filter="">All</button>`;
-  const typeBtns = types.map(t =>
-    `<button class="filter-pill ${_deviceFilter === t ? "active" : ""}" data-filter="${esc(t)}">${esc(t)}</button>`
-  ).join("");
+  const isAllActive = _deviceFilters.size === 0;
+  const allBtn = `<button class="filter-pill ${isAllActive ? "active" : ""}" data-filter="__ALL__">All</button>`;
+  const typeBtns = types.map(t => {
+    const isActive = _deviceFilters.has(t);
+    return `<button class="filter-pill ${isActive ? "active" : ""}" data-filter="${esc(t)}">${esc(t)}</button>`;
+  }).join("");
 
   container.innerHTML = allBtn + typeBtns;
 }
 
-// Single delegated listener — avoids inline onclick quote-escaping issues
+// Single delegated listener for device filter pills
 document.addEventListener("click", (e) => {
   const pill = e.target.closest("#device-filters .filter-pill");
   if (!pill) return;
-  _deviceFilter = pill.dataset.filter || null;
+  const filterVal = pill.dataset.filter;
+  if (filterVal === "__ALL__") {
+    _deviceFilters.clear();
+  } else {
+    if (_deviceFilters.has(filterVal)) {
+      _deviceFilters.delete(filterVal);
+    } else {
+      _deviceFilters.add(filterVal);
+    }
+  }
   renderBTDevices();
 });
 
 function renderBTDevices() {
   renderDeviceFilters();
 
-  const filtered = _deviceFilter
-    ? state.btDevices.filter(d => d.device_type === _deviceFilter)
-    : state.btDevices;
+  const filtered = _deviceFilters.size === 0
+    ? state.btDevices
+    : state.btDevices.filter(d => _deviceFilters.has(d.device_type));
 
   const active   = filtered.filter((d) => d.is_active);
   const inactive = filtered.filter((d) => !d.is_active);
@@ -461,7 +620,7 @@ function renderBTDevices() {
   const activeEl = document.getElementById("active-devices-list");
   activeEl.innerHTML = active.length
     ? active.map(btCardHTML).join("")
-    : `<div class="empty-state small">No active devices detected.</div>`;
+    : `<div class="empty-state small">No active devices match selected filters.</div>`;
 
   // Inactive section
   const inactiveLabel = document.getElementById("inactive-label");
@@ -470,7 +629,7 @@ function renderBTDevices() {
   const inactiveEl = document.getElementById("inactive-devices-list");
   inactiveEl.innerHTML = inactive.length
     ? inactive.map((d) => btCardHTML(d, false)).join("")
-    : `<div class="empty-state small">No devices in history.</div>`;
+    : `<div class="empty-state small">No devices in history match selected filters.</div>`;
 }
 
 function btCardHTML(device, active = device.is_active) {
@@ -575,12 +734,40 @@ function updateTimerDisplays() {
 
 // ── Rename device ─────────────────────────────────────────
 
+function openRenameFromPC(deviceId, currentName) {
+  openRenameDevice(deviceId, currentName);
+}
+
 function openRenameDevice(deviceId, currentName) {
   document.getElementById("rename-device-id").value = deviceId;
   const device = state.btDevices.find((d) => d.id === deviceId);
-  document.getElementById("rename-custom-name").value = device?.custom_name || "";
-  document.getElementById("modal-rename-title").textContent = `Rename: ${currentName}`;
+  
+  // Prefer existing custom_name; if none, prefill discovered_name or currentName so user can just add prefix/suffix
+  const currentVal = device?.custom_name || device?.discovered_name || currentName || "";
+  const inputEl = document.getElementById("rename-custom-name");
+  inputEl.value = currentVal;
+
+  const hintText = document.getElementById("rename-hint-text");
+  if (hintText) {
+    hintText.textContent = "Leave blank to use default name";
+  }
+
+  const resetBtn = document.getElementById("btn-reset-name");
+  if (resetBtn) {
+    resetBtn.style.display = device?.custom_name ? "inline-block" : "none";
+    resetBtn.onclick = () => {
+      inputEl.value = "";
+      inputEl.focus();
+    };
+  }
+
+  document.getElementById("modal-rename-title").textContent = `Rename Device`;
   openModal("modal-rename");
+
+  setTimeout(() => {
+    inputEl.focus();
+    inputEl.select();
+  }, 100);
 }
 
 document.getElementById("form-rename").addEventListener("submit", async (e) => {
@@ -733,11 +920,12 @@ document.getElementById("btn-clear-log").addEventListener("click", () => {
 function setupModals() {
   document.getElementById("btn-pc-cancel").addEventListener("click",         () => closeModal("modal-pc"));
   document.getElementById("btn-assign-cancel").addEventListener("click",     () => closeModal("modal-assign"));
+  document.getElementById("btn-duplicate-cancel").addEventListener("click",  () => closeModal("modal-duplicate"));
   document.getElementById("btn-rename-cancel").addEventListener("click",     () => closeModal("modal-rename"));
   document.getElementById("btn-add-device-cancel").addEventListener("click", () => closeModal("modal-add-device"));
 
   // Close on overlay click
-  ["modal-pc", "modal-assign", "modal-rename", "modal-add-device"].forEach((id) => {
+  ["modal-pc", "modal-assign", "modal-duplicate", "modal-rename", "modal-add-device"].forEach((id) => {
     document.getElementById(id).addEventListener("click", (e) => {
       if (e.target.id === id) closeModal(id);
     });
