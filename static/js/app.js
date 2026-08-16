@@ -287,8 +287,10 @@ let _assignFilter  = null;
 
 function openAssignDevice(pcId) {
   _assigningPcId = pcId;
+  _assigningBtDeviceId = null;
   _assignFilter  = null;
   const pc = state.pcs.find((p) => p.id === pcId);
+  document.getElementById("modal-assign-title").textContent = "Assign Devices";
   document.getElementById("modal-assign-subtitle").textContent =
     pc ? `Assigning to: ${pc.name}` : "";
   renderAssignList(pcId);
@@ -513,6 +515,9 @@ function btCardHTML(device, active = device.is_active) {
         ${lastSeen}
       </div>
       <div class="bt-card-actions">
+        <button class="btn-icon" title="Assign to PC" onclick="openAssignFromDevice(${device.id},'${esc(name)}')">
+          <i class="bi bi-link-45deg"></i>
+        </button>
         <button class="btn-icon" title="Rename" onclick="openRenameDevice(${device.id},'${esc(name)}')">
           <i class="bi bi-pencil"></i>
         </button>
@@ -606,169 +611,38 @@ async function deleteDevice(deviceId, name) {
   showToast(`${name} removed`, "info");
 }
 
-// ── Pair to Pi modal ──────────────────────────────────────
+// ── Assign from device ────────────────────────────────────
 
-const _pairingSeen = {};   // mac → device dict, accumulated during scan
+let _assigningBtDeviceId = null;
 
-document.getElementById("btn-pair-pi").addEventListener("click", openPairModal);
-
-function openPairModal() {
-  Object.keys(_pairingSeen).forEach(k => delete _pairingSeen[k]);
-  document.getElementById("pair-scan-results").style.display = "none";
-  document.getElementById("pair-scan-list").innerHTML = "";
-  document.getElementById("pair-status-bar").style.display = "none";
-  loadPairedDevices();
-  openModal("modal-pair-pi");
+function openAssignFromDevice(btDeviceId, deviceName) {
+  _assigningPcId = null;
+  _assigningBtDeviceId = btDeviceId;
+  document.getElementById("modal-assign-title").textContent = "Assign to PC";
+  document.getElementById("modal-assign-subtitle").textContent = `Which PCs should "${deviceName}" wake?`;
+  document.getElementById("assign-filter-bar").innerHTML = "";
+  renderAssignFromDevice(btDeviceId);
+  openModal("modal-assign");
 }
 
-async function loadPairedDevices() {
-  try {
-    const res = await fetch("/api/bt-pairing/paired");
-    const paired = await res.json();
-    const section = document.getElementById("pair-paired-section");
-    const list    = document.getElementById("pair-paired-list");
-    if (!paired.length) { section.style.display = "none"; return; }
-    section.style.display = "block";
-    list.innerHTML = paired.map(d => `
-      <div class="scan-result-item" style="justify-content:space-between">
-        <div style="display:flex;align-items:center;gap:10px">
-          <i class="bi bi-link-45deg scan-result-icon"></i>
-          <div>
-            <div class="scan-result-name">${esc(d.name || d.mac)}</div>
-            <div class="scan-result-detail">${esc(d.mac)}</div>
-          </div>
-        </div>
-        <button class="btn-icon danger" title="Unpair"
-          onclick="unpairDevice('${esc(d.mac)}','${esc(d.name || d.mac)}',this)">
-          <i class="bi bi-x-lg"></i>
-        </button>
-      </div>`).join("");
-  } catch(e) { /* not Linux — silently skip */ }
-}
-
-document.getElementById("btn-pair-scan").addEventListener("click", async () => {
-  const btn = document.getElementById("btn-pair-scan");
-  btn.disabled = true;
-  btn.innerHTML = `<span class="spinner"></span> Scanning…`;
-
-  document.getElementById("pair-scan-results").style.display = "block";
-  document.getElementById("pair-scan-list").innerHTML =
-    `<div style="padding:12px 14px;font-size:0.85rem;color:var(--text-muted)">
-      Put controller in pairing mode now (hold Create+PS until rapid double-flash)…
-    </div>`;
-  setPairStatus("", "");
-
-  try {
-    await fetch("/api/bt-pairing/scan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ duration: 12 }),
-    });
-  } catch(e) {
-    setPairStatus("error", "Scan failed — is this running on Linux?");
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = `<i class="bi bi-radar"></i> Scan again`;
+function renderAssignFromDevice(btDeviceId) {
+  const list = document.getElementById("assign-device-list");
+  if (!state.pcs.length) {
+    list.innerHTML = `<div class="assign-empty">No PCs added yet.<br>Go to <strong>Computers</strong> to add one.</div>`;
+    return;
   }
-});
-
-// Real-time device discovery via SocketIO
-if (typeof io !== "undefined") {
-  const _pairSocket = io({ transports: ["websocket", "polling"] });
-
-  _pairSocket.on("pairing_device_found", (device) => {
-    if (_pairingSeen[device.mac]) return;
-    _pairingSeen[device.mac] = device;
-
-    const list = document.getElementById("pair-scan-list");
-    // Remove "waiting" placeholder
-    const placeholder = list.querySelector("div[style]");
-    if (placeholder && placeholder.textContent.includes("pairing mode")) placeholder.remove();
-
-    const el = document.createElement("div");
-    el.className = "scan-result-item";
-    el.id = `pair-item-${device.mac.replace(/:/g,"-")}`;
-    el.innerHTML = `
-      <i class="bi bi-controller scan-result-icon"></i>
-      <div>
-        <div class="scan-result-name">${esc(device.name || "Unknown device")}</div>
-        <div class="scan-result-detail">${esc(device.mac)}</div>
+  list.innerHTML = state.pcs.map((pc) => {
+    const assigned = (pc.bt_devices || []).some(d => d.bt_id === btDeviceId);
+    return `
+    <div class="assign-item ${assigned ? "assigned" : ""}"
+         onclick="toggleAssign(${pc.id},${btDeviceId},this)">
+      <div class="assign-check"><i class="bi bi-check-lg"></i></div>
+      <div class="assign-item-info">
+        <div class="assign-item-name">${esc(pc.name)}</div>
+        <div class="assign-item-mac">${esc(pc.mac_address)}</div>
       </div>
-      <button class="btn-sm primary" style="flex:0;padding:6px 12px;margin-left:auto"
-        onclick="pairDevice('${esc(device.mac)}','${esc(device.name || "")}',this)">
-        Pair
-      </button>`;
-    list.appendChild(el);
-  });
-
-  _pairSocket.on("pairing_status", (data) => {
-    const type = data.status === "success" ? "success" : data.status === "pairing" ? "info" : "error";
-    setPairStatus(type, data.message);
-    if (data.status === "success") loadPairedDevices();
-  });
-
-  _pairSocket.on("pairing_scan_done", (data) => {
-    if (!data.count) {
-      document.getElementById("pair-scan-list").innerHTML =
-        `<div style="padding:12px 14px;font-size:0.85rem;color:var(--text-muted)">
-          No devices found. Make sure controller is in pairing mode.
-        </div>`;
-    }
-  });
-}
-
-async function pairDevice(mac, name, btn) {
-  btn.disabled = true;
-  btn.textContent = "Pairing…";
-  setPairStatus("info", `Pairing ${name || mac}…`);
-  try {
-    const res  = await fetch("/api/bt-pairing/pair", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mac, name }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      btn.textContent = "✓ Paired";
-      btn.style.background = "var(--green)";
-      showToast(`Paired ${name || mac}`, "success");
-      loadPairedDevices();
-    } else {
-      btn.disabled = false;
-      btn.textContent = "Retry";
-      setPairStatus("error", data.message || "Pairing failed");
-    }
-  } catch(e) {
-    btn.disabled = false;
-    btn.textContent = "Retry";
-    setPairStatus("error", "Network error");
-  }
-}
-
-async function unpairDevice(mac, name, btn) {
-  if (!confirm(`Remove pairing with "${name}"?\nThe controller will need to be re-paired.`)) return;
-  btn.disabled = true;
-  const res  = await fetch("/api/bt-pairing/unpair", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mac }),
-  });
-  const data = await res.json();
-  if (res.ok) {
-    showToast(`Unpaired ${name}`, "info");
-    loadPairedDevices();
-  } else {
-    btn.disabled = false;
-    showToast(data.message || "Unpair failed", "error");
-  }
-}
-
-function setPairStatus(type, message) {
-  const bar = document.getElementById("pair-status-bar");
-  if (!message) { bar.style.display = "none"; return; }
-  bar.style.display = "block";
-  bar.className = `pair-status-bar ${type}`;
-  bar.textContent = message;
+    </div>`;
+  }).join("");
 }
 
 // ── Manual add device ─────────────────────────────────────
@@ -861,10 +735,9 @@ function setupModals() {
   document.getElementById("btn-assign-cancel").addEventListener("click",     () => closeModal("modal-assign"));
   document.getElementById("btn-rename-cancel").addEventListener("click",     () => closeModal("modal-rename"));
   document.getElementById("btn-add-device-cancel").addEventListener("click", () => closeModal("modal-add-device"));
-  document.getElementById("btn-pair-pi-cancel").addEventListener("click",    () => closeModal("modal-pair-pi"));
 
   // Close on overlay click
-  ["modal-pc", "modal-assign", "modal-rename", "modal-add-device", "modal-pair-pi"].forEach((id) => {
+  ["modal-pc", "modal-assign", "modal-rename", "modal-add-device"].forEach((id) => {
     document.getElementById(id).addEventListener("click", (e) => {
       if (e.target.id === id) closeModal(id);
     });

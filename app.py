@@ -7,8 +7,7 @@ from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 
 import database as db
-from bluetooth_scanner import scan_bluetooth, start_continuous_ble_scan, start_dbus_bt_monitor
-from bluetooth_pairing import pair_device, unpair_device, get_paired_devices, scan_for_pairable
+from bluetooth_scanner import scan_bluetooth, start_continuous_ble_scan
 from wol import send_wol
 from network_scanner import scan_network
 
@@ -178,9 +177,6 @@ def _bluetooth_scan_loop() -> None:
     threading.Thread(target=_inactive_check_loop, daemon=True).start()
     # Classic BT periodic scan (Linux only)
     threading.Thread(target=_classic_bt_loop, daemon=True).start()
-    # D-Bus monitor for paired devices connecting (Linux only)
-    # Detects controller pressing PS/Xbox button when paired with this Pi
-    threading.Thread(target=lambda: start_dbus_bt_monitor(_on_ble_device_detected), daemon=True).start()
     # Continuous BLE — catches unpaired/pairing-mode devices, blocks forever
     start_continuous_ble_scan(_on_ble_device_detected)
 
@@ -316,58 +312,6 @@ def api_remove_mapping():
 def api_network_scan():
     hosts = scan_network()
     return jsonify(hosts)
-
-
-# --- Bluetooth pairing ---
-
-@app.route("/api/bt-pairing/paired", methods=["GET"])
-def api_get_paired():
-    return jsonify(get_paired_devices())
-
-
-@app.route("/api/bt-pairing/scan", methods=["POST"])
-def api_pairing_scan():
-    """
-    Start a 12-second BT/BLE discovery scan.
-    Streams discovered devices in real-time via SocketIO 'pairing_device_found' events,
-    then returns the full list.
-    """
-    def _emit(device):
-        socketio.emit("pairing_device_found", device)
-
-    duration = int(request.get_json(silent=True, force=True).get("duration", 12) if request.data else 12)
-    devices = scan_for_pairable(duration=duration, emit_fn=_emit)
-    socketio.emit("pairing_scan_done", {"count": len(devices)})
-    return jsonify(devices)
-
-
-@app.route("/api/bt-pairing/pair", methods=["POST"])
-def api_pair_device():
-    data = request.get_json(silent=True) or {}
-    mac = (data.get("mac") or "").strip()
-    if not mac:
-        return jsonify({"error": "mac required"}), 400
-
-    socketio.emit("pairing_status", {"mac": mac, "status": "pairing", "message": f"Pairing {mac}…"})
-    ok, msg = pair_device(mac)
-    status = "success" if ok else "error"
-    socketio.emit("pairing_status", {"mac": mac, "status": status, "message": msg})
-
-    if ok:
-        # Update the db entry so it shows as a known paired device
-        db.upsert_bt_device(mac, data.get("name") or "", None)
-
-    return jsonify({"ok": ok, "message": msg}), (200 if ok else 500)
-
-
-@app.route("/api/bt-pairing/unpair", methods=["POST"])
-def api_unpair_device():
-    data = request.get_json(silent=True) or {}
-    mac = (data.get("mac") or "").strip()
-    if not mac:
-        return jsonify({"error": "mac required"}), 400
-    ok, msg = unpair_device(mac)
-    return jsonify({"ok": ok, "message": msg}), (200 if ok else 500)
 
 
 # --- Status ---
