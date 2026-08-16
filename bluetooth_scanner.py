@@ -108,9 +108,15 @@ def classify_device(
 async def _ble_scan(duration: float = 5.0) -> list[dict]:
     devices = []
     try:
-        # return_adv=True gives us (BLEDevice, AdvertisementData) pairs
-        # so we can read manufacturer_data and service_uuids for fingerprinting
-        discovered = await BleakScanner.discover(timeout=duration, return_adv=True)
+        # scanning_mode="passive" on Linux lets BlueZ see directed advertising
+        # packets (e.g. DualSense trying to reconnect to a paired PS5).
+        # On macOS CoreBluetooth ignores this kwarg gracefully.
+        scanning_mode = "passive" if platform.system() == "Linux" else "active"
+        discovered = await BleakScanner.discover(
+            timeout=duration,
+            return_adv=True,
+            scanning_mode=scanning_mode,
+        )
         for address, (ble_device, adv_data) in discovered.items():
             name = ble_device.name or adv_data.local_name or ""
             mfr  = getattr(adv_data, "manufacturer_data", {}) or {}

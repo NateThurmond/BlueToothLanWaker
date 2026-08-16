@@ -384,28 +384,27 @@ async function loadBTDevices() {
 
 function renderDeviceFilters() {
   const container = document.getElementById("device-filters");
-  // Collect unique device types (non-null)
   const types = [...new Set(
     state.btDevices.map(d => d.device_type).filter(Boolean)
   )].sort();
 
   if (!types.length) { container.innerHTML = ""; return; }
 
-  const allBtn = `<button class="filter-pill ${_deviceFilter === null ? "active" : ""}"
-    onclick="setDeviceFilter(null)">All</button>`;
-
+  const allBtn = `<button class="filter-pill ${_deviceFilter === null ? "active" : ""}" data-filter="">All</button>`;
   const typeBtns = types.map(t =>
-    `<button class="filter-pill ${_deviceFilter === t ? "active" : ""}"
-      onclick="setDeviceFilter(${JSON.stringify(t)})">${esc(t)}</button>`
+    `<button class="filter-pill ${_deviceFilter === t ? "active" : ""}" data-filter="${esc(t)}">${esc(t)}</button>`
   ).join("");
 
   container.innerHTML = allBtn + typeBtns;
 }
 
-function setDeviceFilter(type) {
-  _deviceFilter = type;
+// Single delegated listener — avoids inline onclick quote-escaping issues
+document.addEventListener("click", (e) => {
+  const pill = e.target.closest("#device-filters .filter-pill");
+  if (!pill) return;
+  _deviceFilter = pill.dataset.filter || null;
   renderBTDevices();
-}
+});
 
 function renderBTDevices() {
   renderDeviceFilters();
