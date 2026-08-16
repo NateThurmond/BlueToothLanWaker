@@ -111,11 +111,9 @@ async def _ble_scan(duration: float = 5.0) -> list[dict]:
         # scanning_mode="passive" on Linux lets BlueZ see directed advertising
         # packets (e.g. DualSense trying to reconnect to a paired PS5).
         # On macOS CoreBluetooth ignores this kwarg gracefully.
-        scanning_mode = "passive" if platform.system() == "Linux" else "active"
         discovered = await BleakScanner.discover(
             timeout=duration,
             return_adv=True,
-            scanning_mode=scanning_mode,
         )
         for address, (ble_device, adv_data) in discovered.items():
             name = ble_device.name or adv_data.local_name or ""
@@ -165,13 +163,12 @@ async def _run_continuous_ble(callback_fn) -> None:
             "device_type": device_type,
         })
 
-    scanning_mode = "passive" if platform.system() == "Linux" else "active"
-    scanner = BleakScanner(detection_callback=_on_detect, scanning_mode=scanning_mode)
+    scanner = BleakScanner(detection_callback=_on_detect)
     await scanner.start()
-    logger.info("Continuous BLE scanner started (mode=%s)", scanning_mode)
+    logger.info("Continuous BLE scanner started")
     try:
         while True:
-            await asyncio.sleep(3600)   # just keep the loop alive
+            await asyncio.sleep(3600)
     finally:
         await scanner.stop()
 

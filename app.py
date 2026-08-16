@@ -165,7 +165,6 @@ def _bluetooth_scan_loop() -> None:
     logger.info(
         "Starting continuous BLE scanner (inactive_timeout=%ds)", INACTIVE_TIMEOUT
     )
-    # Inactive expiry checker
     threading.Thread(target=_inactive_check_loop, daemon=True).start()
     # Classic BT periodic scan (Linux only)
     threading.Thread(target=_classic_bt_loop, daemon=True).start()
