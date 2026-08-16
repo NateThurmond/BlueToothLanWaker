@@ -55,9 +55,14 @@
   <section id="tab-devices" class="tab-panel">
     <div class="panel-toolbar">
       <h2 class="panel-title">Bluetooth Devices</h2>
-      <button class="btn-action btn-ghost" id="btn-add-device">
-        <i class="bi bi-plus-lg"></i> Add manually
-      </button>
+      <div style="display:flex;gap:8px">
+        <button class="btn-action btn-ghost" id="btn-pair-pi">
+          <i class="bi bi-link-45deg"></i> Pair to Pi
+        </button>
+        <button class="btn-action btn-ghost" id="btn-add-device">
+          <i class="bi bi-plus-lg"></i> Add manually
+        </button>
+      </div>
     </div>
 
     <!-- Filter bubbles -->
@@ -172,6 +177,36 @@
 
     <div class="modal-actions">
       <button type="button" class="btn-cancel" id="btn-assign-cancel">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Pair to Pi -->
+<div class="modal-overlay" id="modal-pair-pi" role="dialog" aria-modal="true" aria-labelledby="modal-pair-title">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <h3 class="modal-title" id="modal-pair-title">Pair Controller to Pi</h3>
+    <p class="modal-subtitle">Put your controller in pairing mode, then tap Scan.</p>
+
+    <div id="pair-status-bar" class="pair-status-bar" style="display:none"></div>
+
+    <div id="pair-scan-results" class="scan-results" style="display:none">
+      <div class="scan-results-header">Nearby devices — tap to pair</div>
+      <div id="pair-scan-list"></div>
+    </div>
+
+    <div id="pair-paired-section" style="display:none">
+      <div class="scan-results-header" style="padding:8px 12px;background:var(--bg-card-2);border-bottom:1px solid var(--border);font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-muted)">
+        Already paired with Pi
+      </div>
+      <div id="pair-paired-list"></div>
+    </div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="btn-pair-pi-cancel">Close</button>
+      <button type="button" class="btn-save" id="btn-pair-scan">
+        <i class="bi bi-radar"></i> Scan (12s)
+      </button>
     </div>
   </div>
 </div>

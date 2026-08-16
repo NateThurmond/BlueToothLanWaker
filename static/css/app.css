@@ -793,6 +793,21 @@ html, body {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ── Pair status bar ─────────────────────────────────────── */
+.pair-status-bar {
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-card-2);
+  color: var(--text-muted);
+}
+.pair-status-bar.success { background: rgba(59,165,92,0.12); color: var(--green); border-color: var(--green-dim); }
+.pair-status-bar.error   { background: rgba(237,66,69,0.12);  color: var(--red);   border-color: var(--red); }
+.pair-status-bar.info    { background: rgba(88,101,242,0.12); color: var(--accent); border-color: rgba(88,101,242,0.3); }
+
 /* ── Desktop layout ─────────────────────────────────────── */
 @media (min-width: 640px) {
   .app-main { padding: 20px; max-width: 680px; margin-left: auto; margin-right: auto; }
