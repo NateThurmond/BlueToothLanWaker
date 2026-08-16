@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+
+  <!-- PWA / homescreen -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="WoL Waker">
+  <meta name="theme-color" content="#0f0f18">
+  <link rel="manifest" href="/static/manifest.json">
+
+  <title>WoL Waker</title>
+
+  <!-- Bootstrap 5 (dark) -->
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link href="/static/css/app.css" rel="stylesheet">
+</head>
+<body>
+
+<!-- ════════════════════════════════════════ HEADER ══════════════════════════ -->
+<header class="app-header">
+  <div class="app-title">
+    <i class="bi bi-lightning-charge-fill"></i>
+    WoL Waker
+  </div>
+  <div id="scan-status" class="scan-status offline">
+    <span class="status-dot"></span>
+    <span class="status-label">Connecting…</span>
+  </div>
+</header>
+
+<!-- ════════════════════════════════════════ MAIN ════════════════════════════ -->
+<main class="app-main">
+
+  <!-- ── PCs tab ─────────────────────────────────────────── -->
+  <section id="tab-pcs" class="tab-panel active">
+    <div class="panel-toolbar">
+      <h2 class="panel-title">Computers</h2>
+      <button class="btn-action" id="btn-add-pc">
+        <i class="bi bi-plus-lg"></i> Add PC
+      </button>
+    </div>
+    <div id="pcs-list" class="card-list">
+      <div class="empty-state">
+        <i class="bi bi-pc-display"></i>
+        <p>No PCs yet.<br>Tap <strong>Add PC</strong> to get started.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Devices tab ─────────────────────────────────────── -->
+  <section id="tab-devices" class="tab-panel">
+    <div class="panel-toolbar">
+      <h2 class="panel-title">Bluetooth Devices</h2>
+    </div>
+
+    <!-- Filter bubbles -->
+    <div id="device-filters" class="device-filters"></div>
+
+    <div class="devices-section">
+      <div class="section-header active-header">
+        <span class="pulse-dot"></span>
+        <span id="active-label">Active</span>
+      </div>
+      <div id="active-devices-list" class="card-list">
+        <div class="empty-state small">No active devices detected.</div>
+      </div>
+    </div>
+
+    <div class="devices-section mt-3">
+      <button class="section-header collapse-btn" id="btn-toggle-inactive" aria-expanded="false">
+        <i class="bi bi-clock-history"></i>
+        <span id="inactive-label">Inactive</span>
+        <i class="bi bi-chevron-down toggle-icon"></i>
+      </button>
+      <div id="inactive-devices-list" class="card-list collapse-content" style="display:none">
+        <div class="empty-state small">No devices in history.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Log tab ─────────────────────────────────────────── -->
+  <section id="tab-log" class="tab-panel">
+    <div class="panel-toolbar">
+      <h2 class="panel-title">Activity Log</h2>
+      <button class="btn-action btn-ghost" id="btn-clear-log">
+        <i class="bi bi-trash3"></i> Clear
+      </button>
+    </div>
+    <div id="log-list" class="log-list">
+      <div class="empty-state">
+        <i class="bi bi-journal-text"></i>
+        <p>WoL events will appear here.</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ════════════════════════════════════════ BOTTOM NAV ══════════════════════ -->
+<nav class="bottom-nav">
+  <button class="nav-btn active" data-tab="pcs">
+    <i class="bi bi-pc-display"></i>
+    <span>Computers</span>
+  </button>
+  <button class="nav-btn" data-tab="devices">
+    <i class="bi bi-bluetooth"></i>
+    <span>Devices</span>
+  </button>
+  <button class="nav-btn" data-tab="log">
+    <i class="bi bi-journal-text"></i>
+    <span>Log</span>
+  </button>
+</nav>
+
+<!-- ════════════════════════════════════════ TOAST ═══════════════════════════ -->
+<div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+<!-- ════════════════════════════════════════ MODALS ══════════════════════════ -->
+
+<!-- Add / Edit PC -->
+<div class="modal-overlay" id="modal-pc" role="dialog" aria-modal="true" aria-labelledby="modal-pc-title">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <h3 class="modal-title" id="modal-pc-title">Add Computer</h3>
+
+    <form id="form-pc" novalidate>
+      <input type="hidden" id="pc-id">
+
+      <label class="field-label" for="pc-name">Name <span class="required">*</span></label>
+      <input class="field-input" id="pc-name" type="text" placeholder="Gaming PC" autocomplete="off" required>
+
+      <label class="field-label" for="pc-mac">MAC Address <span class="required">*</span></label>
+      <input class="field-input" id="pc-mac" type="text" placeholder="AA:BB:CC:DD:EE:FF"
+             autocomplete="off" pattern="^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$" required>
+      <div class="field-hint">The MAC address of the PC's network adapter</div>
+
+      <label class="field-label" for="pc-ip">IP Address <span class="optional">(optional)</span></label>
+      <input class="field-input" id="pc-ip" type="text" placeholder="192.168.1.100" autocomplete="off">
+
+      <button type="button" class="btn-scan-network" id="btn-scan-network">
+        <i class="bi bi-radar"></i> Scan network to discover PCs
+      </button>
+
+      <div id="scan-results" class="scan-results" style="display:none">
+        <div class="scan-results-header">Discovered hosts — tap to fill</div>
+        <div id="scan-results-list"></div>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" id="btn-pc-cancel">Cancel</button>
+        <button type="submit" class="btn-save">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Assign Device to PC -->
+<div class="modal-overlay" id="modal-assign" role="dialog" aria-modal="true" aria-labelledby="modal-assign-title">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <h3 class="modal-title" id="modal-assign-title">Assign Devices</h3>
+    <p class="modal-subtitle" id="modal-assign-subtitle"></p>
+
+    <div id="assign-device-list" class="assign-list"></div>
+
+    <div class="modal-actions">
+      <button type="button" class="btn-cancel" id="btn-assign-cancel">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Rename BT Device -->
+<div class="modal-overlay" id="modal-rename" role="dialog" aria-modal="true" aria-labelledby="modal-rename-title">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <h3 class="modal-title" id="modal-rename-title">Rename Device</h3>
+
+    <form id="form-rename" novalidate>
+      <input type="hidden" id="rename-device-id">
+      <label class="field-label" for="rename-custom-name">Custom Name</label>
+      <input class="field-input" id="rename-custom-name" type="text"
+             placeholder="e.g. Blue PS5 Controller" autocomplete="off">
+      <div class="field-hint">Leave blank to use the discovered name</div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" id="btn-rename-cancel">Cancel</button>
+        <button type="submit" class="btn-save">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════ SCRIPTS ═════════════════════════ -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/socket.io@4.7.5/client-dist/socket.io.min.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
