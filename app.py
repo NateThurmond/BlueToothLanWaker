@@ -115,10 +115,19 @@ def _on_ble_device_detected(device: dict) -> None:
                 fire_wol = True
 
     if fire_wol:
-        logger.info("New device detected, firing WoL: %s (%s)", name or mac, device_type or "unknown")
-        threading.Thread(
-            target=_trigger_wol_for_device, args=(mac,), daemon=True
-        ).start()
+        pcs = db.get_pcs_for_bt_device(mac)
+        if pcs:
+            logger.info(
+                "Controller detected — sending WoL: %s (%s) → %s",
+                name or mac,
+                device_type or "unknown",
+                [p["name"] for p in pcs],
+            )
+            threading.Thread(
+                target=_trigger_wol_for_device, args=(mac,), daemon=True
+            ).start()
+        else:
+            logger.debug("New device seen, no WoL mapping: %s", name or mac)
 
     if newly_active:
         socketio.emit("device_active", {"mac": mac})
