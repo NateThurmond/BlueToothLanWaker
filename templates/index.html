@@ -55,6 +55,9 @@
   <section id="tab-devices" class="tab-panel">
     <div class="panel-toolbar">
       <h2 class="panel-title">Bluetooth Devices</h2>
+      <button class="btn-action btn-ghost" id="btn-add-device">
+        <i class="bi bi-plus-lg"></i> Add manually
+      </button>
     </div>
 
     <!-- Filter bubbles -->
@@ -164,12 +167,47 @@
     <div class="modal-handle"></div>
     <h3 class="modal-title" id="modal-assign-title">Assign Devices</h3>
     <p class="modal-subtitle" id="modal-assign-subtitle"></p>
-
+    <div id="assign-filter-bar" class="device-filters" style="margin-bottom:10px"></div>
     <div id="assign-device-list" class="assign-list"></div>
 
     <div class="modal-actions">
       <button type="button" class="btn-cancel" id="btn-assign-cancel">Done</button>
     </div>
+  </div>
+</div>
+
+<!-- Add BT Device Manually -->
+<div class="modal-overlay" id="modal-add-device" role="dialog" aria-modal="true" aria-labelledby="modal-add-device-title">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <h3 class="modal-title" id="modal-add-device-title">Add Device Manually</h3>
+    <p style="font-size:0.82rem;color:var(--text-muted);margin:-8px 0 14px">Use this when a device can't be auto-detected (e.g. testing on macOS). On the Pi, devices appear automatically.</p>
+
+    <form id="form-add-device" novalidate>
+      <label class="field-label" for="add-device-mac">MAC Address <span class="required">*</span></label>
+      <input class="field-input" id="add-device-mac" type="text" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off" required>
+
+      <label class="field-label" for="add-device-name">Device Name <span class="optional">(optional)</span></label>
+      <input class="field-input" id="add-device-name" type="text" placeholder="DualSense Wireless Controller" autocomplete="off">
+
+      <label class="field-label" for="add-device-type">Device Type <span class="optional">(optional)</span></label>
+      <select class="field-input" id="add-device-type">
+        <option value="">— Unknown —</option>
+        <option value="PS5 DualSense">PS5 DualSense</option>
+        <option value="PS4 DualShock 4">PS4 DualShock 4</option>
+        <option value="PlayStation Controller">PlayStation Controller</option>
+        <option value="Xbox Controller">Xbox Controller</option>
+        <option value="Xbox Elite Controller">Xbox Elite Controller</option>
+        <option value="Nintendo Switch Pro">Nintendo Switch Pro</option>
+        <option value="Nintendo Joy-Con">Nintendo Joy-Con</option>
+        <option value="Game Controller">Game Controller (other)</option>
+      </select>
+
+      <div class="modal-actions">
+        <button type="button" class="btn-cancel" id="btn-add-device-cancel">Cancel</button>
+        <button type="submit" class="btn-save">Add Device</button>
+      </div>
+    </form>
   </div>
 </div>
 

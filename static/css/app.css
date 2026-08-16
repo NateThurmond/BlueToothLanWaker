@@ -568,6 +568,8 @@ html, body {
   font-size: 0.95rem;
   outline: none;
   transition: border-color 0.15s;
+  -webkit-appearance: none;
+  appearance: none;
 }
 .field-input::placeholder { color: var(--text-dim); }
 .field-input:focus { border-color: var(--accent); }

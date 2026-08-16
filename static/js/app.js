@@ -283,12 +283,92 @@ function hideScanResults() {
 // ── Assign device modal ──────────────────────────────────
 
 let _assigningPcId = null;
+let _assignFilter  = null;
 
 function openAssignDevice(pcId) {
   _assigningPcId = pcId;
+  _assignFilter  = null;
   const pc = state.pcs.find((p) => p.id === pcId);
   document.getElementById("modal-assign-subtitle").textContent =
     pc ? `Assigning to: ${pc.name}` : "";
+  renderAssignList(pcId);
+  openModal("modal-assign");
+}
+
+function renderAssignFilterBar() {
+  const bar = document.getElementById("assign-filter-bar");
+  const types = [...new Set(state.btDevices.map(d => d.device_type).filter(Boolean))].sort();
+  if (!types.length) { bar.innerHTML = ""; return; }
+  const allBtn = `<button class="filter-pill ${_assignFilter === null ? "active" : ""}" data-assign-filter="">All</button>`;
+  const typeBtns = types.map(t =>
+    `<button class="filter-pill ${_assignFilter === t ? "active" : ""}" data-assign-filter="${esc(t)}">${esc(t)}</button>`
+  ).join("");
+  bar.innerHTML = allBtn + typeBtns;
+}
+
+// Delegated listener for assign filter pills
+document.addEventListener("click", (e) => {
+  const pill = e.target.closest("#assign-filter-bar .filter-pill");
+  if (!pill) return;
+  _assignFilter = pill.dataset.assignFilter || null;
+  if (_assigningPcId) renderAssignList(_assigningPcId);
+});
+
+function renderAssignList(pcId) {
+  renderAssignFilterBar();
+  const pc = state.pcs.find((p) => p.id === pcId);
+  const assignedIds = new Set((pc?.bt_devices || []).map((d) => d.bt_id));
+  const list = document.getElementById("assign-device-list");
+
+  const filtered = _assignFilter
+    ? state.btDevices.filter(d => d.device_type === _assignFilter)
+    : state.btDevices;
+
+  if (!state.btDevices.length) {
+    list.innerHTML = `<div class="assign-empty">No Bluetooth devices seen yet.<br>
+      Use <strong>Add manually</strong> on the Devices tab, or power on a controller so the Pi detects it.</div>`;
+    return;
+  }
+
+  if (!filtered.length) {
+    list.innerHTML = `<div class="assign-empty">No devices match this filter.</div>`;
+    return;
+  }
+
+  // Sort: active first, then by last_seen descending
+  const sorted = [...filtered].sort((a, b) => {
+    if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
+    const ta = a.last_seen || "";
+    const tb = b.last_seen || "";
+    return tb.localeCompare(ta);
+  });
+
+  list.innerHTML = sorted.map((d) => {
+    const assigned = assignedIds.has(d.id);
+    const displayName = d.custom_name || d.discovered_name || null;
+    const nameHtml = displayName
+      ? `<div class="assign-item-name">${esc(displayName)}</div>`
+      : `<div class="assign-item-name unnamed">Unknown device</div>`;
+    const typeLabel = d.device_type
+      ? `<div class="assign-item-type">${esc(d.device_type)}</div>`
+      : "";
+    const seenLabel = d.last_seen
+      ? `<div class="assign-item-seen">${timeAgo(d.last_seen)}</div>`
+      : "";
+    return `
+    <div class="assign-item ${assigned ? "assigned" : ""}"
+         onclick="toggleAssign(${pcId},${d.id},this)">
+      <div class="assign-check"><i class="bi bi-check-lg"></i></div>
+      <div class="assign-item-info">
+        ${nameHtml}
+        ${typeLabel}
+        <div class="assign-item-mac">${esc(d.mac_address)}</div>
+        ${seenLabel}
+      </div>
+      ${d.is_active ? `<span class="assign-item-status active">● Active</span>` : ""}
+    </div>`;
+  }).join("");
+}
 
   const assignedIds = new Set((pc?.bt_devices || []).map((d) => d.bt_id));
   const list = document.getElementById("assign-device-list");
@@ -570,6 +650,36 @@ async function deleteDevice(deviceId, name) {
   showToast(`${name} removed`, "info");
 }
 
+// ── Manual add device ─────────────────────────────────────
+
+document.getElementById("btn-add-device").addEventListener("click", () => {
+  document.getElementById("add-device-mac").value  = "";
+  document.getElementById("add-device-name").value = "";
+  document.getElementById("add-device-type").value = "";
+  openModal("modal-add-device");
+});
+
+document.getElementById("form-add-device").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const mac  = document.getElementById("add-device-mac").value.trim();
+  const name = document.getElementById("add-device-name").value.trim() || null;
+  const type = document.getElementById("add-device-type").value || null;
+  if (!mac) { showToast("MAC address is required", "error"); return; }
+  try {
+    const res = await fetch("/api/bt-devices", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mac_address: mac, discovered_name: name, device_type: type }),
+    });
+    if (!res.ok) { const d = await res.json(); showToast(d.error || "Error adding device", "error"); return; }
+    closeModal("modal-add-device");
+    await loadBTDevices();
+    showToast("Device added", "success");
+  } catch (err) {
+    showToast("Network error", "error");
+  }
+});
+
 // ── Inactive toggle ───────────────────────────────────────
 
 document.getElementById("btn-toggle-inactive").addEventListener("click", () => {
@@ -626,12 +736,13 @@ document.getElementById("btn-clear-log").addEventListener("click", () => {
 //  MODALS
 // ═══════════════════════════════════════════════════════
 function setupModals() {
-  document.getElementById("btn-pc-cancel").addEventListener("click",     () => closeModal("modal-pc"));
-  document.getElementById("btn-assign-cancel").addEventListener("click", () => closeModal("modal-assign"));
-  document.getElementById("btn-rename-cancel").addEventListener("click", () => closeModal("modal-rename"));
+  document.getElementById("btn-pc-cancel").addEventListener("click",         () => closeModal("modal-pc"));
+  document.getElementById("btn-assign-cancel").addEventListener("click",     () => closeModal("modal-assign"));
+  document.getElementById("btn-rename-cancel").addEventListener("click",     () => closeModal("modal-rename"));
+  document.getElementById("btn-add-device-cancel").addEventListener("click", () => closeModal("modal-add-device"));
 
   // Close on overlay click
-  ["modal-pc", "modal-assign", "modal-rename"].forEach((id) => {
+  ["modal-pc", "modal-assign", "modal-rename", "modal-add-device"].forEach((id) => {
     document.getElementById(id).addEventListener("click", (e) => {
       if (e.target.id === id) closeModal(id);
     });

@@ -214,6 +214,19 @@ def api_get_bt_devices():
     return jsonify(_get_device_status())
 
 
+@app.route("/api/bt-devices", methods=["POST"])
+def api_add_bt_device():
+    data = request.get_json(silent=True) or {}
+    mac  = (data.get("mac_address") or "").strip()
+    name = (data.get("discovered_name") or "").strip() or None
+    device_type = (data.get("device_type") or "").strip() or None
+    if not mac:
+        return jsonify({"error": "mac_address is required"}), 400
+    device_id = db.upsert_bt_device(mac, name, device_type)
+    socketio.emit("devices_update", _get_device_status())
+    return jsonify({"id": device_id}), 201
+
+
 @app.route("/api/bt-devices/<int:device_id>", methods=["PUT"])
 def api_update_bt_device(device_id):
     data = request.get_json(silent=True) or {}
