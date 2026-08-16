@@ -152,7 +152,47 @@ Environment="PORT=8080"
 
 ---
 
-## Usage Guide
+## Pairing Controllers to the Pi (Required for Reliable Detection)
+
+When a controller is paired to a console (PS5, Xbox), pressing its button sends a *directed* advertisement aimed only at that console — a passive BLE scanner can't see it. To guarantee the Pi catches the signal:
+
+**How it works after pairing:**
+1. You press the PS button
+2. Controller connects to the Pi (Pi is in its paired list)
+3. Pi detects the connection, fires WoL to your PC → **immediately disconnects**
+4. Controller retries its next paired host (PS5/console), which is now waking up
+5. By the time the console is on (~10–20 s), the controller reconnects normally
+
+**One-time pairing setup per controller:**
+
+```bash
+sudo bluetoothctl
+[bluetooth]# power on
+[bluetooth]# agent on
+[bluetooth]# default-agent
+[bluetooth]# scan on
+# Put controller in pairing mode (hold Create + PS until rapid double-flash)
+# Wait for it to appear, e.g. [NEW] Device AA:BB:CC:DD:EE:FF DualSense Wireless Controller
+[bluetooth]# pair AA:BB:CC:DD:EE:FF
+[bluetooth]# trust AA:BB:CC:DD:EE:FF
+[bluetooth]# scan off
+[bluetooth]# quit
+```
+
+Then install the D-Bus Python binding so WoL Waker can monitor connections:
+
+```bash
+sudo apt install -y libdbus-1-dev python3-dev
+source venv/bin/activate
+pip install dbus-python
+sudo systemctl restart wol-waker
+```
+
+> **Note:** `trust` is what matters — it tells BlueZ to auto-accept reconnects without a prompt. You do NOT need to manually connect; the Pi will accept the controller's incoming connection automatically.
+
+---
+
+
 
 ### 1 — Add your PC(s)
 1. Open the app → **Computers** tab → **Add PC**

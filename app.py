@@ -7,7 +7,7 @@ from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 
 import database as db
-from bluetooth_scanner import scan_bluetooth, start_continuous_ble_scan
+from bluetooth_scanner import scan_bluetooth, start_continuous_ble_scan, start_dbus_bt_monitor
 from wol import send_wol
 from network_scanner import scan_network
 
@@ -177,7 +177,10 @@ def _bluetooth_scan_loop() -> None:
     threading.Thread(target=_inactive_check_loop, daemon=True).start()
     # Classic BT periodic scan (Linux only)
     threading.Thread(target=_classic_bt_loop, daemon=True).start()
-    # Continuous BLE — blocks forever, auto-restarts on crash
+    # D-Bus monitor for paired devices connecting (Linux only)
+    # Detects controller pressing PS/Xbox button when paired with this Pi
+    threading.Thread(target=lambda: start_dbus_bt_monitor(_on_ble_device_detected), daemon=True).start()
+    # Continuous BLE — catches unpaired/pairing-mode devices, blocks forever
     start_continuous_ble_scan(_on_ble_device_detected)
 
 
