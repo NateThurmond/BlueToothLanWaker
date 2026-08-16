@@ -370,50 +370,6 @@ function renderAssignList(pcId) {
   }).join("");
 }
 
-  const assignedIds = new Set((pc?.bt_devices || []).map((d) => d.bt_id));
-  const list = document.getElementById("assign-device-list");
-
-  if (!state.btDevices.length) {
-    list.innerHTML = `<div class="assign-empty">No Bluetooth devices seen yet.<br>
-      Controllers need to be powered on so the Pi can detect them first.</div>`;
-  } else {
-    // Sort: active first, then by last_seen descending
-    const sorted = [...state.btDevices].sort((a, b) => {
-      if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
-      const ta = a.last_seen || "";
-      const tb = b.last_seen || "";
-      return tb.localeCompare(ta);
-    });
-    list.innerHTML = sorted.map((d) => {
-      const assigned = assignedIds.has(d.id);
-      const displayName = d.custom_name || d.discovered_name || null;
-      const nameHtml = displayName
-        ? `<div class="assign-item-name">${esc(displayName)}</div>`
-        : `<div class="assign-item-name unnamed">Unknown device</div>`;
-      const typeLabel = d.device_type
-        ? `<div class="assign-item-type">${esc(d.device_type)}</div>`
-        : "";
-      const seenLabel = d.last_seen
-        ? `<div class="assign-item-seen">${timeAgo(d.last_seen)}</div>`
-        : "";
-      return `
-      <div class="assign-item ${assigned ? "assigned" : ""}"
-           onclick="toggleAssign(${pcId},${d.id},this)">
-        <div class="assign-check"><i class="bi bi-check-lg"></i></div>
-        <div class="assign-item-info">
-          ${nameHtml}
-          ${typeLabel}
-          <div class="assign-item-mac">${esc(d.mac_address)}</div>
-          ${seenLabel}
-        </div>
-        ${d.is_active ? `<span class="assign-item-status active">● Active</span>` : ""}
-      </div>`;
-    }).join("");
-  }
-
-  openModal("modal-assign");
-}
-
 async function toggleAssign(pcId, btDeviceId, el) {
   const wasAssigned = el.classList.contains("assigned");
   el.classList.toggle("assigned");
