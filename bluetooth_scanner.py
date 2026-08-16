@@ -149,6 +149,52 @@ def _scan_ble_sync(duration: float = 5.0) -> list[dict]:
         loop.close()
 
 
+async def _run_continuous_ble(callback_fn) -> None:
+    """
+    Run BLE scanner continuously, calling callback_fn(device_dict) the instant
+    any device advertisement is received.  Never returns normally.
+    """
+    def _on_detect(ble_device, adv_data):
+        name  = ble_device.name or getattr(adv_data, "local_name", "") or ""
+        mfr   = getattr(adv_data, "manufacturer_data", {}) or {}
+        uuids = list(getattr(adv_data, "service_uuids", []) or [])
+        device_type = classify_device(name, mfr, uuids)
+        callback_fn({
+            "mac":         ble_device.address,
+            "name":        name,
+            "device_type": device_type,
+        })
+
+    scanning_mode = "passive" if platform.system() == "Linux" else "active"
+    scanner = BleakScanner(detection_callback=_on_detect, scanning_mode=scanning_mode)
+    await scanner.start()
+    logger.info("Continuous BLE scanner started (mode=%s)", scanning_mode)
+    try:
+        while True:
+            await asyncio.sleep(3600)   # just keep the loop alive
+    finally:
+        await scanner.stop()
+
+
+def start_continuous_ble_scan(callback_fn) -> None:
+    """
+    Block-forever entry point for a dedicated thread.
+    Restarts automatically on crash.
+    """
+    if not _BLEAK_OK:
+        logger.warning("bleak unavailable — continuous BLE scan not started")
+        return
+    while True:
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(_run_continuous_ble(callback_fn))
+        except Exception as exc:
+            logger.error("Continuous BLE scan crashed: %s — restarting in 5 s", exc)
+            import time as _t; _t.sleep(5)
+        finally:
+            loop.close()
+
+
 # ---------------------------------------------------------------------------
 # Classic Bluetooth scanning (Linux/RPi only — hcitool)
 # ---------------------------------------------------------------------------

@@ -7,7 +7,7 @@ from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 
 import database as db
-from bluetooth_scanner import scan_bluetooth
+from bluetooth_scanner import scan_bluetooth, start_continuous_ble_scan
 from wol import send_wol
 from network_scanner import scan_network
 
@@ -24,8 +24,6 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 # How long (seconds) a device stays "active" after last detection
 INACTIVE_TIMEOUT = int(os.environ.get("INACTIVE_TIMEOUT", "60"))
-# How often (seconds) to run a BLE scan cycle
-SCAN_INTERVAL = int(os.environ.get("SCAN_INTERVAL", "10"))
 
 # In-memory active device state  { mac: {"last_seen": float, "name": str} }
 _active_devices: dict = {}
@@ -91,54 +89,88 @@ def _trigger_wol_for_device(bt_mac: str) -> None:
 # Background scan loop
 # ---------------------------------------------------------------------------
 
-def _bluetooth_scan_loop() -> None:
-    logger.info("Bluetooth scan loop started (interval=%ds, timeout=%ds)", SCAN_INTERVAL, INACTIVE_TIMEOUT)
+def _on_ble_device_detected(device: dict) -> None:
+    """
+    Fired immediately by the continuous BLE scanner the instant a device
+    advertisement is received.  Triggers WoL if this is a fresh appearance.
+    """
+    mac         = device["mac"]
+    name        = device.get("name") or ""
+    device_type = device.get("device_type") or None
+
+    db.upsert_bt_device(mac, name, device_type)
+
+    now          = time.time()
+    newly_active = False
+    fire_wol     = False
+
+    with _state_lock:
+        was_active = mac in _active_devices
+        _active_devices[mac] = {"last_seen": now, "name": name}
+
+        if not was_active:
+            newly_active = True
+            if mac not in _woken_this_session:
+                _woken_this_session.add(mac)
+                fire_wol = True
+
+    if fire_wol:
+        logger.info("New device detected, firing WoL: %s (%s)", name or mac, device_type or "unknown")
+        threading.Thread(
+            target=_trigger_wol_for_device, args=(mac,), daemon=True
+        ).start()
+
+    if newly_active:
+        socketio.emit("device_active", {"mac": mac})
+        socketio.emit("devices_update", _get_device_status())
+
+
+def _inactive_check_loop() -> None:
+    """Runs every 5 s — expires devices that haven't been seen recently."""
     while True:
-        try:
-            devices = scan_bluetooth()
-            now = time.time()
+        time.sleep(5)
+        now = time.time()
+        newly_inactive: list[str] = []
 
-            newly_active: list[str] = []
-            newly_inactive: list[str] = []
+        with _state_lock:
+            for mac, info in list(_active_devices.items()):
+                if now - info["last_seen"] > INACTIVE_TIMEOUT:
+                    newly_inactive.append(mac)
+                    del _active_devices[mac]
+                    _woken_this_session.discard(mac)
 
-            with _state_lock:
-                for device in devices:
-                    mac = device["mac"]
-                    name = device.get("name") or ""
-                    device_type = device.get("device_type") or None
-                    db.upsert_bt_device(mac, name, device_type)
-
-                    if mac not in _active_devices:
-                        newly_active.append(mac)
-                        if mac not in _woken_this_session:
-                            _woken_this_session.add(mac)
-                            # Fire WoL outside lock
-                            threading.Thread(
-                                target=_trigger_wol_for_device,
-                                args=(mac,),
-                                daemon=True,
-                            ).start()
-
-                    _active_devices[mac] = {"last_seen": now, "name": name}
-
-                for mac, info in list(_active_devices.items()):
-                    if now - info["last_seen"] > INACTIVE_TIMEOUT:
-                        newly_inactive.append(mac)
-                        del _active_devices[mac]
-                        _woken_this_session.discard(mac)
-
-            # Emit state events
-            for mac in newly_active:
-                socketio.emit("device_active", {"mac": mac})
+        if newly_inactive:
             for mac in newly_inactive:
                 socketio.emit("device_inactive", {"mac": mac})
-
             socketio.emit("devices_update", _get_device_status())
 
-        except Exception as exc:
-            logger.error("Scan loop error: %s", exc)
 
-        time.sleep(SCAN_INTERVAL)
+def _classic_bt_loop() -> None:
+    """Periodic classic-BT inquiry scan (Linux only, ~15 s per cycle)."""
+    import platform as _platform
+    if _platform.system() != "Linux":
+        return
+    from bluetooth_scanner import _scan_classic_bt
+    while True:
+        try:
+            devices = _scan_classic_bt()
+            for device in devices:
+                _on_ble_device_detected(device)
+        except Exception as exc:
+            logger.debug("Classic BT loop error: %s", exc)
+        time.sleep(5)
+
+
+def _bluetooth_scan_loop() -> None:
+    logger.info(
+        "Starting continuous BLE scanner (inactive_timeout=%ds)", INACTIVE_TIMEOUT
+    )
+    # Inactive expiry checker
+    threading.Thread(target=_inactive_check_loop, daemon=True).start()
+    # Classic BT periodic scan (Linux only)
+    threading.Thread(target=_classic_bt_loop, daemon=True).start()
+    # Continuous BLE — blocks forever, auto-restarts on crash
+    start_continuous_ble_scan(_on_ble_device_detected)
 
 
 # ---------------------------------------------------------------------------
