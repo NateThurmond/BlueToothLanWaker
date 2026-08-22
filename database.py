@@ -46,9 +46,12 @@ CREATE TABLE IF NOT EXISTS mappings (
 
 @contextmanager
 def _conn():
-    con = sqlite3.connect(DB_PATH, check_same_thread=False)
+    con = sqlite3.connect(DB_PATH, check_same_thread=False, timeout=5.0)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys=ON")
+    # Wait up to 5 s for a held write lock instead of erroring with
+    # "database is locked" (SQLITE_BUSY).
+    con.execute("PRAGMA busy_timeout=5000")
     try:
         yield con
         con.commit()
@@ -207,3 +210,16 @@ def get_pcs_for_bt_device(bt_mac: str) -> list[dict]:
             (bt_mac,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def get_all_mapped_bt_macs() -> list[str]:
+    """Every BT MAC that currently has at least one PC mapping."""
+    with _conn() as con:
+        rows = con.execute(
+            """
+            SELECT DISTINCT b.mac_address
+            FROM   bt_devices b
+            JOIN   mappings   m ON m.bt_device_id = b.id
+            """
+        ).fetchall()
+    return [r["mac_address"] for r in rows]

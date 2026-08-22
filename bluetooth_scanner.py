@@ -137,9 +137,23 @@ async def _run_continuous_ble(callback_fn) -> None:
             "device_type": device_type,
         })
 
-    scanner = BleakScanner(detection_callback=_on_detect)
+    scanner_kwargs = {"detection_callback": _on_detect, "scanning_mode": "active"}
+    if platform.system() == "Linux":
+        # bleak's BlueZ backend hardcodes DuplicateData=False, which tells BlueZ
+        # to SUPPRESS repeated identical advertisements. A stationary beacon
+        # (same payload + stable RSSI, e.g. an iBeacon) is then only surfaced
+        # every 10-30 s instead of every advertising interval — the callback
+        # misses most bursts (bleak issue #494). Forcing DuplicateData=True makes
+        # BlueZ deliver every advertisement, so a fixed beacon is caught reliably.
+        # A plain dict is used (BlueZScannerArgs is a TypedDict) so this stays
+        # robust across bleak versions and is a no-op on non-BlueZ backends.
+        scanner_kwargs["bluez"] = {"filters": {"DuplicateData": True, "Transport": "le"}}
+    scanner = BleakScanner(**scanner_kwargs)
     await scanner.start()
-    logger.info("Continuous BLE scanner started")
+    logger.info(
+        "Continuous BLE scanner started (DuplicateData=%s)",
+        "True" if platform.system() == "Linux" else "backend-default",
+    )
     try:
         while True:
             await asyncio.sleep(3600)

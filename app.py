@@ -2,6 +2,7 @@ import threading
 import time
 import logging
 import os
+import queue
 
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
@@ -23,13 +24,56 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "wol-waker-dev-key")
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 # How long (seconds) a device stays "active" after last detection
-INACTIVE_TIMEOUT = int(os.environ.get("INACTIVE_TIMEOUT", "60"))
+#INACTIVE_TIMEOUT = int(os.environ.get("INACTIVE_TIMEOUT", "60"))
+INACTIVE_TIMEOUT = 10
 
 # In-memory active device state  { mac: {"last_seen": float, "name": str} }
 _active_devices: dict = {}
 # BT MACs that already triggered WoL this session (reset when device goes inactive)
 _woken_this_session: set = set()
 _state_lock = threading.Lock()
+
+# --- Detection hot-path decoupling -----------------------------------------
+# The BLE detection callback runs on bleak's asyncio event loop. It must NEVER
+# block on SQLite or socket.io, or BlueZ advertisement reports back up and get
+# dropped — which makes brief beacon bursts miss ~90% of the time. So the
+# callback does only in-memory work and hands disk/emit work to a worker thread.
+_UPSERT_THROTTLE = 30.0          # min seconds between DB last_seen writes per MAC
+_EMIT_THROTTLE   = 2.0           # min seconds between UI devices_update broadcasts
+_write_queue: "queue.Queue" = queue.Queue(maxsize=10000)
+_throttle: dict = {}             # mac -> last DB write time; key "__emit__" for UI
+# MACs currently mapped to a PC — lets the callback decide whether to fire WoL
+# without touching the DB on the hot path. Refreshed off-loop every 5 s.
+_mapped_macs: set = set()
+_mapped_lock = threading.Lock()
+
+
+def _refresh_mapped_macs() -> None:
+    try:
+        macs = set(db.get_all_mapped_bt_macs())
+    except Exception as exc:
+        logger.debug("mapped-mac refresh failed: %s", exc)
+        return
+    with _mapped_lock:
+        _mapped_macs.clear()
+        _mapped_macs.update(macs)
+
+
+def _db_writer_loop() -> None:
+    """Drains disk/emit work off the BLE event loop so intake never blocks."""
+    while True:
+        item = _write_queue.get()
+        try:
+            kind = item[0]
+            if kind == "upsert":
+                _, mac, name, dtype = item
+                db.upsert_bt_device(mac, name, dtype)
+            elif kind == "emit_status":
+                socketio.emit("devices_update", _get_device_status())
+        except Exception as exc:
+            logger.debug("db writer error: %s", exc)
+        finally:
+            _write_queue.task_done()
 
 
 # ---------------------------------------------------------------------------
@@ -98,11 +142,11 @@ def _on_ble_device_detected(device: dict) -> None:
     name        = device.get("name") or ""
     device_type = device.get("device_type") or None
 
-    db.upsert_bt_device(mac, name, device_type)
-
     now          = time.time()
     newly_active = False
     fire_wol     = False
+    do_upsert    = False
+    do_emit      = False
 
     with _state_lock:
         was_active = mac in _active_devices
@@ -114,14 +158,28 @@ def _on_ble_device_detected(device: dict) -> None:
                 _woken_this_session.add(mac)
                 fire_wol = True
 
+        # Throttle disk writes: persist last_seen at most once per device per
+        # _UPSERT_THROTTLE, but always on a fresh appearance.
+        last_write = _throttle.get(mac, 0.0)
+        if newly_active or (now - last_write) >= _UPSERT_THROTTLE:
+            _throttle[mac] = now
+            do_upsert = True
+
+        if newly_active:
+            last_emit = _throttle.get("__emit__", 0.0)
+            if (now - last_emit) >= _EMIT_THROTTLE:
+                _throttle["__emit__"] = now
+                do_emit = True
+
+    # Fire WoL only for mapped devices — in-memory check, no DB on the hot path.
     if fire_wol:
-        pcs = db.get_pcs_for_bt_device(mac)
-        if pcs:
+        with _mapped_lock:
+            is_mapped = mac in _mapped_macs
+        if is_mapped:
             logger.info(
-                "Controller detected — sending WoL: %s (%s) → %s",
+                "Controller detected — sending WoL: %s (%s)",
                 name or mac,
                 device_type or "unknown",
-                [p["name"] for p in pcs],
             )
             threading.Thread(
                 target=_trigger_wol_for_device, args=(mac,), daemon=True
@@ -129,15 +187,28 @@ def _on_ble_device_detected(device: dict) -> None:
         else:
             logger.debug("New device seen, no WoL mapping: %s", name or mac)
 
+    # Hand all disk/socket work to the writer thread; never block intake.
+    if do_upsert:
+        try:
+            _write_queue.put_nowait(("upsert", mac, name, device_type))
+        except queue.Full:
+            logger.debug("write queue full — dropping upsert for %s", mac)
     if newly_active:
         socketio.emit("device_active", {"mac": mac})
-        socketio.emit("devices_update", _get_device_status())
+    if do_emit:
+        try:
+            _write_queue.put_nowait(("emit_status",))
+        except queue.Full:
+            pass
 
 
 def _inactive_check_loop() -> None:
     """Runs every 5 s — expires devices that haven't been seen recently."""
     while True:
         time.sleep(5)
+        # Keep the in-memory mapped-MAC set fresh so the BLE hot path can decide
+        # whether to fire WoL without a DB read.
+        _refresh_mapped_macs()
         now = time.time()
         newly_inactive: list[str] = []
 
@@ -174,9 +245,20 @@ def _bluetooth_scan_loop() -> None:
     logger.info(
         "Starting continuous BLE scanner (inactive_timeout=%ds)", INACTIVE_TIMEOUT
     )
+    _refresh_mapped_macs()
+    # Writer thread absorbs all SQLite/socket work off the BLE event loop.
+    threading.Thread(target=_db_writer_loop, daemon=True).start()
     threading.Thread(target=_inactive_check_loop, daemon=True).start()
-    # Classic BT periodic scan (Linux only)
-    threading.Thread(target=_classic_bt_loop, daemon=True).start()
+    # Classic BT inquiry (hcitool scan) shares the single radio with BLE and
+    # each inquiry hogs it ~10-15 s, starving BLE reception and causing missed
+    # beacon bursts. BLE scanning already catches controllers in pairing mode
+    # and BLE beacons, so classic inquiry is OFF by default. Opt in with
+    # ENABLE_CLASSIC_BT=1 only if you rely on non-advertising classic devices.
+    if os.environ.get("ENABLE_CLASSIC_BT", "").lower() in ("1", "true", "yes"):
+        logger.info("Classic BT inquiry loop enabled (may reduce BLE catch rate)")
+        threading.Thread(target=_classic_bt_loop, daemon=True).start()
+    else:
+        logger.info("Classic BT inquiry loop disabled (set ENABLE_CLASSIC_BT=1 to enable)")
     # Continuous BLE — catches unpaired/pairing-mode devices, blocks forever
     start_continuous_ble_scan(_on_ble_device_detected)
 
