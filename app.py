@@ -226,11 +226,20 @@ def _inactive_check_loop() -> None:
 
 
 def _classic_bt_loop() -> None:
-    """Periodic classic-BT inquiry scan (Linux only, ~15 s per cycle)."""
+    """Periodic classic-BT inquiry scan (Linux only).
+
+    PS4/PS5/Xbox controllers enter pairing over Bluetooth CLASSIC (BR/EDR) and
+    are found via inquiry (hcitool scan), not BLE advertising. Inquiry shares the
+    single radio with BLE and each pass hogs it ~10 s, so we idle
+    CLASSIC_BT_INTERVAL seconds between passes to leave the radio free for BLE
+    beacon bursts. A controller stays discoverable for minutes in pairing mode,
+    so a ~20 s cadence still catches it well before it times out.
+    """
     import platform as _platform
     if _platform.system() != "Linux":
         return
     from bluetooth_scanner import _scan_classic_bt
+    interval = int(os.environ.get("CLASSIC_BT_INTERVAL", "20"))
     while True:
         try:
             devices = _scan_classic_bt()
@@ -238,7 +247,7 @@ def _classic_bt_loop() -> None:
                 _on_ble_device_detected(device)
         except Exception as exc:
             logger.debug("Classic BT loop error: %s", exc)
-        time.sleep(5)
+        time.sleep(interval)
 
 
 def _bluetooth_scan_loop() -> None:
@@ -249,16 +258,16 @@ def _bluetooth_scan_loop() -> None:
     # Writer thread absorbs all SQLite/socket work off the BLE event loop.
     threading.Thread(target=_db_writer_loop, daemon=True).start()
     threading.Thread(target=_inactive_check_loop, daemon=True).start()
-    # Classic BT inquiry (hcitool scan) shares the single radio with BLE and
-    # each inquiry hogs it ~10-15 s, starving BLE reception and causing missed
-    # beacon bursts. BLE scanning already catches controllers in pairing mode
-    # and BLE beacons, so classic inquiry is OFF by default. Opt in with
-    # ENABLE_CLASSIC_BT=1 only if you rely on non-advertising classic devices.
-    if os.environ.get("ENABLE_CLASSIC_BT", "").lower() in ("1", "true", "yes"):
-        logger.info("Classic BT inquiry loop enabled (may reduce BLE catch rate)")
+    # Classic BT inquiry is REQUIRED for PS4/PS5/Xbox controllers — they pair
+    # over Bluetooth Classic and are found via inquiry, not BLE. It's ON by
+    # default and runs on a gentle cadence (see _classic_bt_loop) so it coexists
+    # with BLE beacon detection. Set ENABLE_CLASSIC_BT=0 to disable if you only
+    # use BLE beacons and want maximum BLE responsiveness.
+    if os.environ.get("ENABLE_CLASSIC_BT", "1").lower() in ("1", "true", "yes"):
+        logger.info("Classic BT inquiry loop enabled")
         threading.Thread(target=_classic_bt_loop, daemon=True).start()
     else:
-        logger.info("Classic BT inquiry loop disabled (set ENABLE_CLASSIC_BT=1 to enable)")
+        logger.info("Classic BT inquiry loop disabled (ENABLE_CLASSIC_BT=0)")
     # Continuous BLE — catches unpaired/pairing-mode devices, blocks forever
     start_continuous_ble_scan(_on_ble_device_detected)
 
